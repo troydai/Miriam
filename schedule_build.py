@@ -24,19 +24,35 @@ def create_storage_client(settings):
     return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
 
 
-def schedule_build_task(job_id, settings):
-    """schedule a build task in the given job. returns the container for build output and task reference."""
-    bsc = create_storage_client(settings)
-    container_name = job_id.replace('-', '')
-    bsc.create_container(job_id.replace('-', ''))
-    sas = bsc.generate_container_shared_access_signature(
-        container_name, permission=ContainerPermissions(list=True, write=True),
-        expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1)))
-    container_url = bsc.make_blob_url(container_name, '', 'https', sas)
+def schedule_build_job(pool, timestamp, settings):
+    """
+    Schedule a build job in the given pool. returns the container for build output and job reference.
 
-    print('create container', container_name)
+    Building and running tests are two separate jobs so that the testing job can relies on job preparation tasks to
+    prepare test environment. The product and test build is an essential part of the preparation. The jobs can't be
+    combined because the preparation task has to be defined by the time the job is created. However neither the product
+    or the test package is ready then.
+    """
+    from azure.batch.models import OnAllTasksComplete
+    bc = create_batch_client(settings)
+    sc = create_storage_client(settings)
 
-    build_cmds = [
+    job_id = 'build-{}'.format(timestamp)
+    build_container = job_id.replace('-', '')
+
+    bc.job.add(JobAddParameter(job_id, PoolInformation(pool), on_all_tasks_complete=OnAllTasksComplete.terminate_job))
+
+    sc.create_container(build_container)
+    build_container_url = sc.make_blob_url(
+        container_name=build_container,
+        blob_name='',
+        protocol='https',
+        sas_token=sc.generate_container_shared_access_signature(
+            container_name=build_container,
+            permission=ContainerPermissions(list=True, write=True),
+            expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1))))
+
+    build_commands = [
         'git clone -b {} -- {} gitsrc'.format(settings['gitsource']['branch'], settings['gitsource']['url']),
         'cd gitsrc',
         './scripts/batch/build_all.sh',
@@ -44,19 +60,17 @@ def schedule_build_task(job_id, settings):
     ]
 
     output_file = OutputFile('gitsrc/artifacts/build/*.*',
-                             OutputFileDestination(OutputFileBlobContainerDestination(container_url, 'build')),
+                             OutputFileDestination(OutputFileBlobContainerDestination(build_container_url, 'build')),
                              OutputFileUploadOptions(OutputFileUploadCondition.task_success))
+
     build_task = TaskAddParameter(id='build',
-                                  command_line=get_command_string(*build_cmds),
+                                  command_line=get_command_string(*build_commands),
                                   display_name='Build all product and test code.',
                                   output_files=[output_file])
 
-    bc = create_batch_client(settings)
     bc.task.add(job_id, build_task)
-    task = bc.task.get(job_id, 'build')
 
-    print('create build task')
-    return task, container_name
+    return job_id, build_container
 
 
 def main():
@@ -65,19 +79,10 @@ def main():
         settings = json.load(fq)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')
 
-    # 1. schedule a job to build project and test packages
     bc = create_batch_client(settings)
     pool = bc.pool.get(settings['azurebatch']['pool'])
-    print('found pool', pool.id)
-
-    job_id = 'job-{}'.format(timestamp)
-    bc.job.add(JobAddParameter(job_id, PoolInformation(pool.id), uses_task_dependencies=True))
-    job = bc.job.get(job_id)
-
-    print('create job', job.id)
-
-    build_task, build_container = schedule_build_task(job.id, settings)
-    print('schedule build task {}. the results will be saved to container {}'.format(build_task.id, build_container))
+    build_job_id, build_container = schedule_build_job(timestamp, pool.id, settings)
+    print('schedule build job {}. the results will be saved to container {}'.format(build_job_id, build_container))
 
 
 if __name__ == '__main__':
