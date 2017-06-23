@@ -81,7 +81,7 @@ def main():
 
     bc = create_batch_client(settings)
     pool = bc.pool.get(settings['azurebatch']['pool'])
-    build_job_id, build_container = schedule_build_job(timestamp, pool.id, settings)
+    build_job_id, build_container = schedule_build_job(pool.id, timestamp, settings)
     print('schedule build job {}. the results will be saved to container {}'.format(build_job_id, build_container))
 
 
