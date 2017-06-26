@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 
+import os
+import argparse
+import json
 import sys
+import logging
 from datetime import datetime, timedelta
+
+logger = logging.getLogger('miriam')
 
 
 def get_command_string(*args):
-    """Generate a bash facing one-line command."""
     return "/bin/bash -c 'set -e; set -o pipefail; {}; wait'".format(';'.join(args))
 
 
@@ -21,76 +26,85 @@ def create_storage_client(settings):
     return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
 
 
-def main(settings):
-    from azure.batch.models import (JobState, JobPreparationTask, JobReleaseTask, JobAddParameter, OnAllTasksComplete,
-                                    ResourceFile,
-                                    PoolInformation, TaskAddParameter)
+def main(settings, remain_active=False):
+    from azure.batch.models import (JobState, JobPreparationTask, JobReleaseTask, JobAddParameter, JobManagerTask,
+                                    OnAllTasksComplete, ResourceFile, PoolInformation, TaskAddParameter,
+                                    EnvironmentSetting)
     from azure.storage.blob.models import ContainerPermissions
 
     bc = create_batch_client(settings)
-    # build_job = bc.job.get(settings['staged']['build']['job'])
+    build_job = settings['build']
+    # TODO: make it wait on a build job
+    # build_job = bc.job.get(settings['build'])
     # if build_job.state != JobState.completed:
-    #     print('The job {} is not completed.'.format(build_job['id']))
+    #     logger.error('The build job %s is not completed.', build_job['id'])
     #     sys.exit(1)
 
     # find the build container, generate read sas
-    build_container = settings['staged']['build']['container']
     sc = create_storage_client(settings)
-    if not sc.get_container_properties(build_container):
-        print('The build container {} is not found.'.format(build_container))
-        sys.exit(1)
+    if not sc.get_container_properties('builds'):
+        logger.error('The build container %s is not found.', 'builds')
+        sys.exit(2)
 
-    sas = sc.generate_container_shared_access_signature(container_name=build_container,
+    sas = sc.generate_container_shared_access_signature(container_name='builds',
                                                         permission=ContainerPermissions(read=True),
                                                         expiry=(datetime.utcnow() + timedelta(days=1)))
-
-    # upload app scripts
-    for each in ('app/install.sh', 'app/status.sh'):
-        sc.create_blob_from_path(container_name=build_container, blob_name=each, file_path=each)
+    logger.info('Container %s is found and read only SAS token is generated.', 'builds')
 
     # create resource files
     resource_files = []
-    for blob in sc.list_blobs(container_name=build_container):
-        blob_url = sc.make_blob_url(build_container, blob.name, 'https', sas)
-        resource_files.append(ResourceFile(blob_source=blob_url, file_path=blob.name))
+    for blob in sc.list_blobs(container_name='builds', prefix=build_job):
+        blob_url = sc.make_blob_url('builds', blob.name, 'https', sas)
+        file_path = blob.name[len(build_job) + 1:]
+        resource_files.append(ResourceFile(blob_source=blob_url, file_path=file_path))
+
+    if not resource_files:
+        logger.error('The build %s is not found in the builds container', build_job)
+        sys.exit(3)
 
     # create automation job
     prep_task = JobPreparationTask(get_command_string('./app/install.sh'),
                                    resource_files=resource_files,
                                    wait_for_success=True)
 
+    env_settings = [EnvironmentSetting(name='AZURE_BATCH_KEY', value=settings['azurebatch']['key']),
+                    EnvironmentSetting(name='AZURE_BATCH_ENDPOINT', value=settings['azurebatch']['endpoint'])]
+
+    manage_task = JobManagerTask('test-creator',
+                                 get_command_string('$AZ_BATCH_NODE_SHARED_DIR/app/schedule.sh'),
+                                 'Automation tasks creator',
+                                 kill_job_on_completion=False,
+                                 environment_settings=env_settings)
+
     job_id = 'test-{}'.format(datetime.utcnow().strftime('%Y%m%d-%H%M%S'))
+    job_complete_action = OnAllTasksComplete.no_action if remain_active else OnAllTasksComplete.terminate_job
+
     bc.job.add(JobAddParameter(id=job_id,
-                               pool_info=PoolInformation(settings['azurebatch']['pool']),
+                               pool_info=PoolInformation(settings['azurebatch']['test-pool']),
                                display_name='Test automation job',
                                job_preparation_task=prep_task,
-                               on_all_tasks_complete=OnAllTasksComplete.terminate_job))
-    bc.task.add(job_id, TaskAddParameter('task-01', get_command_string('$AZ_BATCH_NODE_SHARED_DIR/app/status.sh'),
-                                         'first task'))
+                               job_manager_task=manage_task,
+                               on_all_tasks_complete=job_complete_action))
 
-    print('Job {} scheduled'.format(job_id))
+    logger.info('Job %s is created with preparation task and manager task.', job_id)
 
 
 if __name__ == '__main__':
-    with open('config.json', 'r') as fq:
-        import json
-
+    with open(os.path.expanduser('~/.miriam/config.json'), 'r') as fq:
         local_settings = json.load(fq)
-
-    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--build-job', type=str,
                         help='The build job ID. The tasks will not be scheduled until the build job is finished.')
-    parser.add_argument('--build-container', type=str,
-                        help='The container which contains the test build. Command line option will overwrite config '
-                             'file value.')
+    parser.add_argument('--verbose', '-v', action='count', help='Verbose level.', default=0)
+    parser.add_argument('--remain-active', action='store_true', help='Keep the job active after all tasks are finished')
+
     arg = parser.parse_args()
 
-    if arg.build_container:
-        local_settings['staged']['build']['container'] = arg.build_container
+    log_level = [logging.WARNING, logging.INFO, logging.DEBUG][arg.verbose] if arg.verbose < 3 else logging.DEBUG
+    logging.basicConfig(format='%(levelname)-8s %(name)-10s %(message)s', level=log_level)
 
     if arg.build_job:
-        local_settings['staged']['build']['job'] = arg.build_job
+        local_settings['build'] = arg.build_job
 
-    main(local_settings)
+    main(local_settings, remain_active=arg.remain_active)
