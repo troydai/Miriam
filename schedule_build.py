@@ -101,6 +101,7 @@ def main():
     logger.info('This is a url and sas token granted with list and read access to this container. '
                 'It will expire in 24 hours.')
     logger.info(build_container)
+    print(build_job_id)
 
 
 if __name__ == '__main__':

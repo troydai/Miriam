@@ -26,14 +26,14 @@ def create_storage_client(settings):
     return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
 
 
-def main(settings, remain_active=False, run_live=False):
+def main(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
     from azure.batch.models import (JobState, JobPreparationTask, JobReleaseTask, JobAddParameter, JobManagerTask,
                                     OnAllTasksComplete, ResourceFile, PoolInformation, TaskAddParameter,
                                     EnvironmentSetting)
     from azure.storage.blob.models import ContainerPermissions
 
     bc = create_batch_client(settings)
-    build_job = settings['build']
+
     # TODO: make it wait on a build job
     # build_job = bc.job.get(settings['build'])
     # if build_job.state != JobState.completed:
@@ -53,13 +53,13 @@ def main(settings, remain_active=False, run_live=False):
 
     # create resource files
     resource_files = []
-    for blob in sc.list_blobs(container_name='builds', prefix=build_job):
+    for blob in sc.list_blobs(container_name='builds', prefix=build_id):
         blob_url = sc.make_blob_url('builds', blob.name, 'https', sas)
-        file_path = blob.name[len(build_job) + 1:]
+        file_path = blob.name[len(build_id) + 1:]
         resource_files.append(ResourceFile(blob_source=blob_url, file_path=file_path))
 
     if not resource_files:
-        logger.error('The build %s is not found in the builds container', build_job)
+        logger.error('The build %s is not found in the builds container', build_id)
         sys.exit(3)
 
     # create automation job
@@ -77,19 +77,32 @@ def main(settings, remain_active=False, run_live=False):
                                  environment_settings=env_settings)
 
     job_id = 'test-{}'.format(datetime.utcnow().strftime('%Y%m%d-%H%M%S'))
+
+    # create output storage container
+    output_container_name = 'output-{}'.format(job_id)
+    sc.create_container(container_name=output_container_name)
+    output_container_url = sc.make_blob_url(
+        container_name=output_container_name,
+        blob_name='',
+        protocol='https',
+        sas_token=sc.generate_container_shared_access_signature(
+            container_name=output_container_name,
+            permission=ContainerPermissions(list=True, write=True),
+            expiry=(datetime.utcnow() + timedelta(days=1))))
+
+    # create automation job
     job_complete_action = OnAllTasksComplete.no_action if remain_active else OnAllTasksComplete.terminate_job
 
+    job_environment = [EnvironmentSetting(name='AUTOMATION_OUTPUT_CONTAINER', value=output_container_url)]
     if run_live:
-        job_environment = [EnvironmentSetting(name='AZURE_TEST_RUN_LIVE', value='True'),
-                           EnvironmentSetting(name='AUTOMATION_SP_NAME', value=settings['automation']['account']),
-                           EnvironmentSetting(name='AUTOMATION_SP_PASSWORD', value=settings['automation']['key']),
-                           EnvironmentSetting(name='AUTOMATION_SP_TENANT', value=settings['automation']['tenant'])]
-    else:
-        job_environment = []
+        job_environment.append(EnvironmentSetting(name='AZURE_TEST_RUN_LIVE', value='True'))
+        job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_NAME', value=settings['automation']['account']))
+        job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_PASSWORD', value=settings['automation']['key']))
+        job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_TENANT', value=settings['automation']['tenant']))
 
     bc.job.add(JobAddParameter(id=job_id,
                                pool_info=PoolInformation(settings['azurebatch']['test-pool']),
-                               display_name='Test automation job',
+                               display_name='Automation on build {}. Live: {}'.format(build_id, run_live),
                                common_environment_settings=job_environment,
                                job_preparation_task=prep_task,
                                job_manager_task=manage_task,
@@ -97,14 +110,12 @@ def main(settings, remain_active=False, run_live=False):
 
     logger.info('Job %s is created with preparation task and manager task.', job_id)
 
-
 if __name__ == '__main__':
     with open(os.path.expanduser('~/.miriam/config.json'), 'r') as fq:
         local_settings = json.load(fq)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--build-job', type=str,
-                        help='The build job ID. The tasks will not be scheduled until the build job is finished.')
+    parser.add_argument('job_id', help='The ID of the build to be testd.')
     parser.add_argument('--verbose', '-v', action='count', help='Verbose level.', default=0)
     parser.add_argument('--remain-active', action='store_true', help='Keep the job active after all tasks are finished')
     parser.add_argument('--live', action='store_true', help='Run all the tests live')
@@ -112,9 +123,6 @@ if __name__ == '__main__':
     arg = parser.parse_args()
 
     log_level = [logging.WARNING, logging.INFO, logging.DEBUG][arg.verbose] if arg.verbose < 3 else logging.DEBUG
-    logging.basicConfig(format='%(levelname)-8s %(name)-10s %(message)s', level=log_level)
+    logging.basicConfig(format='%(levelname)-6s %(name)-10s %(message)s', level=log_level)
 
-    if arg.build_job:
-        local_settings['build'] = arg.build_job
-
-    main(local_settings, remain_active=arg.remain_active, run_live=arg.live)
+    main(arg.job_id, local_settings, remain_active=arg.remain_active, run_live=arg.live)
