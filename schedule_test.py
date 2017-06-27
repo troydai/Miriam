@@ -26,7 +26,7 @@ def create_storage_client(settings):
     return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
 
 
-def main(settings, remain_active=False):
+def main(settings, remain_active=False, run_live=False):
     from azure.batch.models import (JobState, JobPreparationTask, JobReleaseTask, JobAddParameter, JobManagerTask,
                                     OnAllTasksComplete, ResourceFile, PoolInformation, TaskAddParameter,
                                     EnvironmentSetting)
@@ -79,9 +79,18 @@ def main(settings, remain_active=False):
     job_id = 'test-{}'.format(datetime.utcnow().strftime('%Y%m%d-%H%M%S'))
     job_complete_action = OnAllTasksComplete.no_action if remain_active else OnAllTasksComplete.terminate_job
 
+    if run_live:
+        job_environment = [EnvironmentSetting(name='AZURE_TEST_RUN_LIVE', value='True'),
+                           EnvironmentSetting(name='AUTOMATION_SP_NAME', value=settings['automation']['account']),
+                           EnvironmentSetting(name='AUTOMATION_SP_PASSWORD', value=settings['automation']['key']),
+                           EnvironmentSetting(name='AUTOMATION_SP_TENANT', value=settings['automation']['tenant'])]
+    else:
+        job_environment = []
+
     bc.job.add(JobAddParameter(id=job_id,
                                pool_info=PoolInformation(settings['azurebatch']['test-pool']),
                                display_name='Test automation job',
+                               common_environment_settings=job_environment,
                                job_preparation_task=prep_task,
                                job_manager_task=manage_task,
                                on_all_tasks_complete=job_complete_action))
@@ -98,6 +107,7 @@ if __name__ == '__main__':
                         help='The build job ID. The tasks will not be scheduled until the build job is finished.')
     parser.add_argument('--verbose', '-v', action='count', help='Verbose level.', default=0)
     parser.add_argument('--remain-active', action='store_true', help='Keep the job active after all tasks are finished')
+    parser.add_argument('--live', action='store_true', help='Run all the tests live')
 
     arg = parser.parse_args()
 
@@ -107,4 +117,4 @@ if __name__ == '__main__':
     if arg.build_job:
         local_settings['build'] = arg.build_job
 
-    main(local_settings, remain_active=arg.remain_active)
+    main(local_settings, remain_active=arg.remain_active, run_live=arg.live)
