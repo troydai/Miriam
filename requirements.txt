@@ -1,5 +1,5 @@
 pylint==1.7.1
 azure-storage==0.34.3
 azure-batch==3.0.0
-xunitmerge==1.0.4
-requests
+requests==2.18.1
+tabulate==0.7.7
