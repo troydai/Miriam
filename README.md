@@ -12,3 +12,9 @@ An then a job mananger task will schedule tasks for each individual test.
 
 The product code repository hosts the build script and test script.
 Miriam only creates job in Azure Batch.
+
+### Reference
+
+#### SQL Database
+
+https://docs.microsoft.com/en-us/azure/sql-database/sql-database-connect-query-python
