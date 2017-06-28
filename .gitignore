@@ -95,3 +95,7 @@ set_account.sh
 
 # local_settings
 config.json
+
+# Miriam
+default.config.yaml
+

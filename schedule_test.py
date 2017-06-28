@@ -27,9 +27,8 @@ def create_storage_client(settings):
 
 
 def main(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
-    from azure.batch.models import (JobState, JobPreparationTask, JobReleaseTask, JobAddParameter, JobManagerTask,
-                                    OnAllTasksComplete, ResourceFile, PoolInformation, TaskAddParameter,
-                                    EnvironmentSetting)
+    from azure.batch.models import (JobPreparationTask, JobAddParameter, JobManagerTask, OnAllTasksComplete,
+                                    ResourceFile, PoolInformation, EnvironmentSetting)
     from azure.storage.blob.models import ContainerPermissions
 
     bc = create_batch_client(settings)
@@ -100,8 +99,9 @@ def main(build_id: str, settings: dict, remain_active: bool = False, run_live: b
         job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_PASSWORD', value=settings['automation']['key']))
         job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_TENANT', value=settings['automation']['tenant']))
 
+    test_pool = next(p['id'] for p in settings['pools'] if p['usage'] == 'test')
     bc.job.add(JobAddParameter(id=job_id,
-                               pool_info=PoolInformation(settings['azurebatch']['test-pool']),
+                               pool_info=PoolInformation(test_pool),
                                display_name='Automation on build {}. Live: {}'.format(build_id, run_live),
                                common_environment_settings=job_environment,
                                job_preparation_task=prep_task,
@@ -110,9 +110,11 @@ def main(build_id: str, settings: dict, remain_active: bool = False, run_live: b
 
     logger.info('Job %s is created with preparation task and manager task.', job_id)
 
+
 if __name__ == '__main__':
-    with open(os.path.expanduser('~/.miriam/config.json'), 'r') as fq:
-        local_settings = json.load(fq)
+    import yaml
+    with open(os.path.expanduser('~/.miriam/config.yaml'), 'r') as fq:
+        local_settings = yaml.load(fq)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('job_id', help='The ID of the build to be testd.')

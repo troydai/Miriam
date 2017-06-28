@@ -89,13 +89,16 @@ def schedule_build_job(pool, timestamp, settings):
 
 def main():
     # read the settings
-    with open(os.path.expanduser('~/.miriam/config.json'), 'r') as fq:
-        settings = json.load(fq)
+    import yaml
+    with open(os.path.expanduser('~/.miriam/config.yaml'), 'r') as fq:
+        settings = yaml.load(fq)
 
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')
 
     bc = create_batch_client(settings)
-    pool = bc.pool.get(settings['azurebatch']['build-pool'])
+
+    build_pool = next(p['id'] for p in settings['pools'] if p['usage'] == 'build')
+    pool = bc.pool.get(build_pool)
     build_job_id, build_container = schedule_build_job(pool.id, timestamp, settings)
     logger.info('Build job {} is scheduled. The results will be saved to container builds.'.format(build_job_id))
     logger.info('This is a url and sas token granted with list and read access to this container. '

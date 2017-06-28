@@ -3,3 +3,4 @@ azure-storage==0.34.3
 azure-batch==3.0.0
 requests==2.18.1
 tabulate==0.7.7
+pyyaml==3.12
