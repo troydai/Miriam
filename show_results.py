@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import sys
+import requests
+
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 
@@ -19,25 +21,22 @@ def create_storage_client(settings):
     return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
 
 
-def get_log_blob_url(run_id: str, settings: dict, include_log: bool):
-    if not include_log:
-        return None
+def get_task_log(run_id: str, task: CloudTask, settings: dict) -> str:
+    import os.path
+    from azure.storage.blob.models import BlobPermissions
 
     storage = create_storage_client(settings)
 
-    def _func(task: CloudTask):
-        import os.path
-        from azure.storage.blob.models import BlobPermissions
+    blob_name = os.path.join(task.id, 'stdout.txt')
+    container_name = f'output-{run_id}'
+    sas = storage.generate_blob_shared_access_signature(container_name, blob_name,
+                                                        permission=BlobPermissions(read=True),
+                                                        protocol='https',
+                                                        expiry=(datetime.utcnow() + timedelta(weeks=52)))
+    url = storage.make_blob_url(container_name, blob_name, sas_token=sas, protocol='https')
 
-        blob_name = os.path.join(task.id, 'stdout.txt')
-        container_name = f'output-{run_id}'
-        sas = storage.generate_blob_shared_access_signature(container_name, blob_name,
-                                                            permission=BlobPermissions(read=True),
-                                                            protocol='https',
-                                                            expiry=(datetime.utcnow() + timedelta(weeks=52)))
-        return storage.make_blob_url(container_name, blob_name, sas_token=sas, protocol='https')
-
-    return _func
+    r = requests.request('GET', url)
+    return '\n'.join(r.text.split('\n')[58:-3])
 
 
 def query_results(settings: dict, run_id: str, failed_only: bool = False):
@@ -50,8 +49,8 @@ def query_results(settings: dict, run_id: str, failed_only: bool = False):
         yield t
 
 
-def parse_tests(results_query, log_blob_url_fn, html: bool):
-    for index, t in enumerate(results_query):
+def parse_tests(task_lists: list):
+    for index, t in enumerate(task_lists):
         row = [index + 1]
 
         _, test_method, test_class = t.display_name.split(' ')
@@ -70,41 +69,50 @@ def parse_tests(results_query, log_blob_url_fn, html: bool):
         row.append(t.execution_info.exit_code)
         row.append((t.execution_info.end_time - t.execution_info.start_time).total_seconds())
 
-        if log_blob_url_fn:
-            url = log_blob_url_fn(t)
-            row.append(f'<a href="{url}">Log</a>' if html else url)
-
         yield row
 
 
 def main(run_id: str, failed_only: bool, include_log: bool, html: bool):
     settings = get_settings()
+    tasks_list = list(query_results(settings, run_id, failed_only))
+    tasks_results = list(parse_tests(tasks_list))
+    tasks_logs = [] if not include_log or not html else list(get_task_log(run_id, t, settings) for t in tasks_list)
 
-    import tabulate
+    headers = ['ID', 'Module', 'Test (Class)', 'Exit Code', 'Duration']
 
-    results_query = query_results(settings, run_id, failed_only)
-    results = parse_tests(results_query, get_log_blob_url(run_id, settings, include_log), html)
-
-    headers = ['Module', 'Test (Class)', 'Exit Code', 'Duration']
     if include_log:
-        headers.append('Output Blob URL')
+        headers.append('Log')
 
-    output = tabulate.tabulate(results, headers=headers, tablefmt='html' if html else 'simple')
     if html:
         with open('results.html', 'w') as fq:
-            fq.write(build_html_page(run_id, output))
+            fq.write(build_html_page(run_id, headers, tasks_results, tasks_logs))
         print('Output is written to results.html')
     else:
-        print(output)
+        import tabulate
+        print(tabulate.tabulate(tasks_results, headers=headers))
 
 
-def build_html_page(run_id: str, table_output: str):
+def build_html_page(run_id: str, headers: list, test_results: list, test_logs: list):
+    import tabulate
+
+    results_log = ''
+    for idx, test_log in enumerate(test_logs):
+        test_name = test_results[idx][2]
+        # test_log = test_log.replace('\n', '<br/>')
+        results_log += f'<div class=\'row\'><h4 id={idx}>{test_name}</h4><pre><code>{test_log}</code></pre></div>'
+    
+    if results_log:
+        for idx, test_result in enumerate(test_results):
+            test_result.append(f'<a href="#{idx}">Log</a>')
+    results_table = tabulate.tabulate(test_results, headers=headers, tablefmt='html')
+
     return """
 <html>
 <head>
 <title>Test results {0}</title>
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
 </head>
+<body>
 <div class='container'>
 <div class='row'>
 <h1>Azure CLI Automation Result</h1>
@@ -114,13 +122,13 @@ def build_html_page(run_id: str, table_output: str):
 </dl>
 </div>
 <div class='row'>
-<body>
 {1}
+</div>
+{2}
+</div>
 </body>
-</div>
-</div>
 </html>
-""".format(run_id, table_output).replace('<table>', '<table class="table table-condensed table-striped">')
+""".format(run_id, results_table, results_log).replace('<table>', '<table class="table table-condensed table-striped">')
 
 
 def get_settings():
