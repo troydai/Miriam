@@ -98,7 +98,6 @@ def build_html_page(run_id: str, headers: list, test_results: list, test_logs: l
     results_log = ''
     for idx, test_log in enumerate(test_logs):
         test_name = test_results[idx][2]
-        # test_log = test_log.replace('\n', '<br/>')
         results_log += f'<div class=\'row\'><h4 id={idx}>{test_name}</h4><pre><code>{test_log}</code></pre></div>'
     
     if results_log:
