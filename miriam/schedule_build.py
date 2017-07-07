@@ -1,35 +1,12 @@
 #!/usr/bin/env python3
 
-import os
-import json
 import datetime
-import logging
+from argparse import ArgumentParser, Namespace
 
-from azure.batch.models import (TaskAddParameter, JobAddParameter, PoolInformation, OutputFile, OutputFileDestination,
-                                OutputFileUploadOptions, OutputFileUploadCondition, OutputFileBlobContainerDestination)
-from azure.storage.blob import ContainerPermissions
+from ._utility import create_storage_client, create_batch_client, get_command_string, get_logger
 
 
-logger = logging.getLogger('miriam')
-
-
-def get_command_string(*args):
-    return "/bin/bash -c 'set -e; set -o pipefail; {}; wait'".format(';'.join(args))
-
-
-def create_batch_client(settings):
-    from azure.batch import BatchServiceClient
-    from azure.batch.batch_auth import SharedKeyCredentials
-    cred = SharedKeyCredentials(settings['azurebatch']['account'], settings['azurebatch']['key'])
-    return BatchServiceClient(cred, settings['azurebatch']['endpoint'])
-
-
-def create_storage_client(settings):
-    from azure.storage.blob import BlockBlobService
-    return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
-
-
-def schedule_build_job(pool, timestamp, settings):
+def _create_build_job(pool, timestamp, settings):
     """
     Schedule a build job in the given pool. returns the container for build output and job reference.
 
@@ -38,7 +15,12 @@ def schedule_build_job(pool, timestamp, settings):
     combined because the preparation task has to be defined by the time the job is created. However neither the product
     or the test package is ready then.
     """
-    from azure.batch.models import OnAllTasksComplete
+    from azure.batch.models import (TaskAddParameter, JobAddParameter, PoolInformation, OutputFile,
+                                    OutputFileDestination, OutputFileUploadOptions, OutputFileUploadCondition,
+                                    OutputFileBlobContainerDestination, OnAllTasksComplete)
+    from azure.storage.blob import ContainerPermissions
+
+    logger = get_logger('build')
 
     bc = create_batch_client(settings)
     sc = create_storage_client(settings)
@@ -87,34 +69,24 @@ def schedule_build_job(pool, timestamp, settings):
             expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1))))
 
 
-def main():
-    # read the settings
+def _build_entry(arg: Namespace):
     import yaml
-    with open(os.path.expanduser('~/.miriam/config.yaml'), 'r') as fq:
-        settings = yaml.load(fq)
 
+    settings = yaml.load(arg.config_file)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')
-
+    logger = get_logger('build')
     bc = create_batch_client(settings)
 
     build_pool = next(p['id'] for p in settings['pools'] if p['usage'] == 'build')
     pool = bc.pool.get(build_pool)
-    build_job_id, build_container = schedule_build_job(pool.id, timestamp, settings)
+    build_job_id, build_container = _create_build_job(pool.id, timestamp, settings)
+
     logger.info('Build job {} is scheduled. The results will be saved to container builds.'.format(build_job_id))
-    logger.info('This is a url and sas token granted with list and read access to this container. '
-                'It will expire in 24 hours.')
-    logger.info(build_container)
+
     print(build_job_id)
 
 
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--verbose', '-v', action='count', help='Verbose level', default=0)
-    arg = parser.parse_args()
-
-    log_level = [logging.WARNING, logging.INFO, logging.DEBUG][arg.verbose] if arg.verbose < 3 else logging.DEBUG
-    logging.basicConfig(format='%(levelname)-8s %(name)-10s %(message)s', level=log_level)
-
-    main()
+def setup_arguments(parser: ArgumentParser) -> None:
+    parser.add_argument('--test', action='store_true', help='Run tests against the build')
+    parser.add_argument('--live', action='store_true', help='Run tests live')
+    parser.set_defaults(func=_build_entry)

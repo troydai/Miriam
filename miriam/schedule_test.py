@@ -1,36 +1,19 @@
 #!/usr/bin/env python3
 
-import os
-import argparse
-import json
 import sys
-import logging
+
+from argparse import ArgumentParser, Namespace
 from datetime import datetime, timedelta
 
-logger = logging.getLogger('miriam')
+from miriam._utility import get_logger, get_command_string, create_batch_client, create_storage_client
 
 
-def get_command_string(*args):
-    return "/bin/bash -c 'set -e; set -o pipefail; {}; wait'".format(';'.join(args))
-
-
-def create_batch_client(settings):
-    from azure.batch import BatchServiceClient
-    from azure.batch.batch_auth import SharedKeyCredentials
-    cred = SharedKeyCredentials(settings['azurebatch']['account'], settings['azurebatch']['key'])
-    return BatchServiceClient(cred, settings['azurebatch']['endpoint'])
-
-
-def create_storage_client(settings):
-    from azure.storage.blob import BlockBlobService
-    return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
-
-
-def main(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
+def _create_test_job(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
     from azure.batch.models import (JobPreparationTask, JobAddParameter, JobManagerTask, OnAllTasksComplete,
                                     ResourceFile, PoolInformation, EnvironmentSetting)
     from azure.storage.blob.models import ContainerPermissions
 
+    logger = get_logger('test')
     bc = create_batch_client(settings)
 
     # TODO: make it wait on a build job
@@ -111,20 +94,14 @@ def main(build_id: str, settings: dict, remain_active: bool = False, run_live: b
     logger.info('Job %s is created with preparation task and manager task.', job_id)
 
 
-if __name__ == '__main__':
+def _test_entry(arg: Namespace):
     import yaml
-    with open(os.path.expanduser('~/.miriam/config.yaml'), 'r') as fq:
-        local_settings = yaml.load(fq)
+    settings = yaml.load(arg.config_file)
+    _create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('job_id', help='The ID of the build to be testd.')
-    parser.add_argument('--verbose', '-v', action='count', help='Verbose level.', default=0)
+
+def setup_arguments(parser: ArgumentParser) -> None:
+    parser.add_argument('job_id', help='The ID of to build to test')
+    parser.add_argument('--live', action='store_true', help='Run tests live')
     parser.add_argument('--remain-active', action='store_true', help='Keep the job active after all tasks are finished')
-    parser.add_argument('--live', action='store_true', help='Run all the tests live')
-
-    arg = parser.parse_args()
-
-    log_level = [logging.WARNING, logging.INFO, logging.DEBUG][arg.verbose] if arg.verbose < 3 else logging.DEBUG
-    logging.basicConfig(format='%(levelname)-6s %(name)-10s %(message)s', level=log_level)
-
-    main(arg.job_id, local_settings, remain_active=arg.remain_active, run_live=arg.live)
+    parser.set_defaults(func=_test_entry)
