@@ -38,5 +38,5 @@ def _create_pools(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def setup_arguments(subparsers) -> None:
+def setup(subparsers) -> None:
     subparsers.add_parser('create-pools', help='Create the batch pools.').set_defaults(func=_create_pools)

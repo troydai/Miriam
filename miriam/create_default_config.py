@@ -41,7 +41,7 @@ def _create_default_config(args: argparse.Namespace) -> None:
     yaml.safe_dump(settings, args.output, indent=2, encoding='utf-8', default_flow_style=False)
 
 
-def setup_arguments(subparsers) -> None:
+def setup(subparsers) -> None:
     parser = subparsers.add_parser('create-default', help='Create a default config file as template.')
     parser.add_argument('--output', help='The path where the default config file is saved.',
                         type=argparse.FileType('w'),

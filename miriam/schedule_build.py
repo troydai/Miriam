@@ -85,7 +85,7 @@ def _build_entry(arg: argparse.Namespace) -> None:
     print(build_job_id)
 
 
-def setup_arguments(subparsers) -> None:
+def setup(subparsers) -> None:
     parser = subparsers.add_parser('build', help='Start a build job')
     parser.add_argument('--test', action='store_true', help='Run tests against the build')
     parser.add_argument('--live', action='store_true', help='Run tests live')

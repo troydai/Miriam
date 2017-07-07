@@ -1,29 +1,14 @@
-#!/usr/bin/env python3
-import sys
-import requests
-
-from argparse import ArgumentParser
-from datetime import datetime, timedelta
-
-from azure.batch import BatchServiceClient
+import argparse
 from azure.batch.models import CloudTask
-from azure.storage.blob import BlockBlobService
 
 
-def create_batch_client(settings: dict) -> BatchServiceClient:
-    from azure.batch.batch_auth import SharedKeyCredentials
-    cred = SharedKeyCredentials(
-        settings['azurebatch']['account'], settings['azurebatch']['key'])
-    return BatchServiceClient(cred, settings['azurebatch']['endpoint'])
-
-
-def create_storage_client(settings):
-    return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
-
-
-def get_task_log(run_id: str, task: CloudTask, settings: dict) -> str:
+def _get_task_log(run_id: str, task: CloudTask, settings: dict) -> str:
     import os.path
+    import requests
+    from datetime import datetime, timedelta
+
     from azure.storage.blob.models import BlobPermissions
+    from miriam._utility import create_storage_client
 
     storage = create_storage_client(settings)
 
@@ -35,25 +20,27 @@ def get_task_log(run_id: str, task: CloudTask, settings: dict) -> str:
                                                         expiry=(datetime.utcnow() + timedelta(weeks=52)))
     url = storage.make_blob_url(container_name, blob_name, sas_token=sas, protocol='https')
 
-    r = requests.request('GET', url)
-    return '\n'.join(r.text.split('\n')[58:-3])
+    response = requests.request('GET', url)
+    return '\n'.join(response.text.split('\n')[58:-3])
 
 
-def query_results(settings: dict, run_id: str, failed_only: bool = False):
+def _query_results(settings: dict, run_id: str, failed_only: bool = False):
+    from miriam._utility import create_batch_client
+
     batch = create_batch_client(settings)
-    for t in batch.task.list(run_id):  # TODO: try use OData filter. But I hate OData!
-        if t.execution_info.exit_code == 0 and failed_only:
+    for task in batch.task.list(run_id):  # try use OData filter. But I hate OData!
+        if task.execution_info.exit_code == 0 and failed_only:
             continue
-        if t.id == 'test-creator':
+        if task.id == 'test-creator':
             continue
-        yield t
+        yield task
 
 
-def parse_tests(task_lists: list):
-    for index, t in enumerate(task_lists):
+def _parse_tests(task_lists: list):
+    for index, task in enumerate(task_lists):
         row = [index + 1]
 
-        _, test_method, test_class = t.display_name.split(' ')
+        _, test_method, test_class = task.display_name.split(' ')
         test_class = test_class.strip('()')
 
         parts = test_class.split('.')
@@ -63,43 +50,49 @@ def parse_tests(task_lists: list):
         elif test_class.startswith('azure.cli.'):
             row.append(parts[2].upper())
         else:
-            raise ValueError('Unexpected test display name: {}'.format(t.display_name))
+            raise ValueError('Unexpected test display name: {}'.format(task.display_name))
 
         row.append(f'{test_method} ({class_name})')
-        row.append(t.execution_info.exit_code)
-        row.append((t.execution_info.end_time - t.execution_info.start_time).total_seconds())
+        row.append(task.execution_info.exit_code)
+        row.append((task.execution_info.end_time - task.execution_info.start_time).total_seconds())
 
         yield row
 
 
-def main(run_id: str, failed_only: bool, include_log: bool, html: bool):
-    settings = get_settings()
-    tasks_list = list(query_results(settings, run_id, failed_only))
-    tasks_results = list(parse_tests(tasks_list))
-    tasks_logs = [] if not include_log or not html else list(get_task_log(run_id, t, settings) for t in tasks_list)
+def _report(args: argparse.Namespace) -> None:
+    import yaml
+    settings = yaml.load(args.config)
+
+    tasks_list = list(_query_results(settings, args.run_id, args.failed_only))
+    tasks_results = list(_parse_tests(tasks_list))
+
+    if args.include_log and args.html:
+        tasks_logs = list(_get_task_log(args.run_id, task, settings) for task in tasks_list)
+    else:
+        tasks_logs = list()
 
     headers = ['ID', 'Module', 'Test (Class)', 'Exit Code', 'Duration']
 
-    if include_log:
+    if args.include_log:
         headers.append('Log')
 
-    if html:
-        with open('results.html', 'w') as fq:
-            fq.write(build_html_page(run_id, headers, tasks_results, tasks_logs))
+    if args.html:
+        with open('results.html', 'w') as html_file:
+            html_file.write(_build_html_page(args.run_id, headers, tasks_results, tasks_logs))
         print('Output is written to results.html')
     else:
         import tabulate
         print(tabulate.tabulate(tasks_results, headers=headers))
 
 
-def build_html_page(run_id: str, headers: list, test_results: list, test_logs: list):
+def _build_html_page(run_id: str, headers: list, test_results: list, test_logs: list) -> str:
     import tabulate
 
     results_log = ''
     for idx, test_log in enumerate(test_logs):
         test_name = test_results[idx][2]
         results_log += f'<div class=\'row\'><h4 id={idx}>{test_name}</h4><pre><code>{test_log}</code></pre></div>'
-    
+
     if results_log:
         for idx, test_result in enumerate(test_results):
             test_result.append(f'<a href="#{idx}">Log</a>')
@@ -130,24 +123,12 @@ def build_html_page(run_id: str, headers: list, test_results: list, test_logs: l
 """.format(run_id, results_table, results_log).replace('<table>', '<table class="table table-condensed table-striped">')
 
 
-def get_settings():
-    try:
-        import yaml
-        import os.path
-
-        with open(os.path.expanduser('~/.miriam/config.yaml'), 'r') as fq:
-            return yaml.load(fq)
-    except (IOError, KeyError):
-        sys.stderr.write('Fail to load config (~/.miriam/config.yaml).\n')
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    parser = ArgumentParser()
+def setup(subparsers) -> None:
+    parser = subparsers.add_parser('report', help='Report the results of a test job.')
     parser.add_argument('run_id', help='The test run id from which the results are collected.')
-    parser.add_argument('--failed', action='store_true', help='List the failed tests only.')
-    parser.add_argument('--include-log', action='store_true', help='List the url to the log blob.')
-    parser.add_argument('--html', action='store_true', help='Output the result in a readable list.')
-    args = parser.parse_args()
 
-    main(args.run_id, args.failed, args.include_log, args.html)
+    parser.add_argument('--html', action='store_true', help='Output the result in an HTML page.')
+    parser.add_argument('--failed', action='store_true', help='List the failed tests only.')
+    parser.add_argument('--include-log', action='store_true',
+                        help='List the url to the log blob. Only works with HTML output')
+    parser.set_defaults(func=_report)

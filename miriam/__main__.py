@@ -8,6 +8,7 @@ def program():
     import miriam.create_default_config
     import miriam.verify_settings
     import miriam.create_pools
+    import miriam.report
 
     from miriam._utility import config_logging
 
@@ -21,11 +22,12 @@ def program():
 
     subparsers = parser.add_subparsers(help='Sub Commands')
 
-    miriam.schedule_build.setup_arguments(subparsers)
-    miriam.schedule_test.setup_arguments(subparsers.add_parser('test', help='Start a test job'))
-    miriam.create_default_config.setup_arguments(subparsers)
-    miriam.create_pools.setup_arguments(subparsers)
-    miriam.verify_settings.setup_arguments(subparsers)
+    miriam.schedule_build.setup(subparsers)
+    miriam.schedule_test.setup(subparsers)
+    miriam.report.setup(subparsers)
+    miriam.create_default_config.setup(subparsers)
+    miriam.create_pools.setup(subparsers)
+    miriam.verify_settings.setup(subparsers)
 
     args = parser.parse_args()
 

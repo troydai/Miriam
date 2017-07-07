@@ -27,5 +27,5 @@ def verify_settings(args: argparse.Namespace) -> dict:
     return settings
 
 
-def setup_arguments(subparsers) -> None:
+def setup(subparsers) -> None:
     subparsers.add_parser('verify-settings', help='Verify the settings file.').set_defaults(func=verify_settings)

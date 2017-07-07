@@ -105,7 +105,7 @@ def _test_entry(arg: argparse.Namespace) -> None:
     _create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
 
 
-def setup_arguments(subparsers) -> None:
+def setup(subparsers) -> None:
     parser = subparsers.add_parser('test', help='Start a test job')
     parser.add_argument('job_id', help='The ID of to build to test')
     parser.add_argument('--live', action='store_true', help='Run tests live')
