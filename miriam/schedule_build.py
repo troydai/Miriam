@@ -22,20 +22,21 @@ def _create_build_job(pool, timestamp, settings):
 
     logger = get_logger('build')
 
-    bc = create_batch_client(settings)
-    sc = create_storage_client(settings)
+    batch_client = create_batch_client(settings)
+    storage_client = create_storage_client(settings)
 
     job_id = 'build-{}'.format(timestamp)
 
-    bc.job.add(JobAddParameter(job_id, PoolInformation(pool), on_all_tasks_complete=OnAllTasksComplete.terminate_job))
+    batch_client.job.add(
+        JobAddParameter(job_id, PoolInformation(pool), on_all_tasks_complete=OnAllTasksComplete.terminate_job))
     logger.info('Job %s is created.', job_id)
 
-    sc.create_container('builds', fail_on_exist=False)
-    build_container_url = sc.make_blob_url(
+    storage_client.create_container('builds', fail_on_exist=False)
+    build_container_url = storage_client.make_blob_url(
         container_name='builds',
         blob_name='',
         protocol='https',
-        sas_token=sc.generate_container_shared_access_signature(
+        sas_token=storage_client.generate_container_shared_access_signature(
             container_name='builds',
             permission=ContainerPermissions(list=True, write=True),
             expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1))))
@@ -56,14 +57,14 @@ def _create_build_job(pool, timestamp, settings):
                                   display_name='Build all product and test code.',
                                   output_files=[output_file])
 
-    bc.task.add(job_id, build_task)
+    batch_client.task.add(job_id, build_task)
     logger.info('Build task is added to job %s', job_id)
 
-    return job_id, sc.make_blob_url(
+    return job_id, storage_client.make_blob_url(
         container_name='builds',
         blob_name=job_id,
         protocol='https',
-        sas_token=sc.generate_container_shared_access_signature(
+        sas_token=storage_client.generate_container_shared_access_signature(
             container_name='builds',
             permission=ContainerPermissions(list=True, read=True),
             expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1))))
@@ -75,11 +76,11 @@ def _build_entry(arg: Namespace):
     settings = yaml.load(arg.config_file)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')
     logger = get_logger('build')
-    bc = create_batch_client(settings)
+    batch_client = create_batch_client(settings)
 
     build_pool = next(p['id'] for p in settings['pools'] if p['usage'] == 'build')
-    pool = bc.pool.get(build_pool)
-    build_job_id, build_container = _create_build_job(pool.id, timestamp, settings)
+    pool = batch_client.pool.get(build_pool)
+    build_job_id, _ = _create_build_job(pool.id, timestamp, settings)
 
     logger.info('Build job {} is scheduled. The results will be saved to container builds.'.format(build_job_id))
 

@@ -1,6 +1,6 @@
+from argparse import Namespace
 from azure.storage.blob import BlockBlobService
 from azure.batch import BatchServiceClient
-from argparse import Namespace
 
 
 def config_logging(args: Namespace):
@@ -11,10 +11,7 @@ def config_logging(args: Namespace):
 
 def get_logger(scope: str = None):
     import logging
-    if scope:
-        return logging.getLogger('miriam').getChild(scope)
-    else:
-        return logging.getLogger('miriam')
+    return logging.getLogger('miriam').getChild(scope) if scope else logging.getLogger('miriam')
 
 
 def get_command_string(*args):

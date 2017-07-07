@@ -1,0 +1,10 @@
+language: python
+python:
+  - "3.6"
+env:
+  - CODE_COVERAGE="True"
+before_install:
+  - sudo apt-get update -q
+  - sudo apt-get install unixodbc-dev -y
+script:
+  - pylint miriam

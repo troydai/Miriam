@@ -1,42 +1,31 @@
 #!/usr/bin/env python3
 
-import sys
-
 from argparse import ArgumentParser, Namespace
 from datetime import datetime, timedelta
-
+from azure.storage.blob import BlockBlobService
 from miriam._utility import get_logger, get_command_string, create_batch_client, create_storage_client
 
 
-def _create_test_job(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
-    from azure.batch.models import (JobPreparationTask, JobAddParameter, JobManagerTask, OnAllTasksComplete,
-                                    ResourceFile, PoolInformation, EnvironmentSetting)
+def _list_build_resource_files(storage_client: BlockBlobService, build_id: str):
+    """ List the files belongs to the target build in the build blob container """
+    import sys
     from azure.storage.blob.models import ContainerPermissions
+    from azure.batch.models import ResourceFile
 
     logger = get_logger('test')
-    bc = create_batch_client(settings)
 
-    # TODO: make it wait on a build job
-    # build_job = bc.job.get(settings['build'])
-    # if build_job.state != JobState.completed:
-    #     logger.error('The build job %s is not completed.', build_job['id'])
-    #     sys.exit(1)
-
-    # find the build container, generate read sas
-    sc = create_storage_client(settings)
-    if not sc.get_container_properties('builds'):
+    if not storage_client.get_container_properties('builds'):
         logger.error('The build container %s is not found.', 'builds')
         sys.exit(2)
 
-    sas = sc.generate_container_shared_access_signature(container_name='builds',
-                                                        permission=ContainerPermissions(read=True),
-                                                        expiry=(datetime.utcnow() + timedelta(days=1)))
+    sas = storage_client.generate_container_shared_access_signature(container_name='builds',
+                                                                    permission=ContainerPermissions(read=True),
+                                                                    expiry=(datetime.utcnow() + timedelta(days=1)))
     logger.info('Container %s is found and read only SAS token is generated.', 'builds')
 
-    # create resource files
     resource_files = []
-    for blob in sc.list_blobs(container_name='builds', prefix=build_id):
-        blob_url = sc.make_blob_url('builds', blob.name, 'https', sas)
+    for blob in storage_client.list_blobs(container_name='builds', prefix=build_id):
+        blob_url = storage_client.make_blob_url('builds', blob.name, 'https', sas)
         file_path = blob.name[len(build_id) + 1:]
         resource_files.append(ResourceFile(blob_source=blob_url, file_path=file_path))
 
@@ -44,7 +33,37 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
         logger.error('The build %s is not found in the builds container', build_id)
         sys.exit(3)
 
+    return resource_files
+
+
+def _create_output_container_folder(storage_client: BlockBlobService, job_id: str):
+    """ Create output storage container """
+    from azure.storage.blob.models import ContainerPermissions
+
+    output_container_name = 'output-{}'.format(job_id)
+    storage_client.create_container(container_name=output_container_name)
+
+    return storage_client.make_blob_url(
+        container_name=output_container_name,
+        blob_name='',
+        protocol='https',
+        sas_token=storage_client.generate_container_shared_access_signature(
+            container_name=output_container_name,
+            permission=ContainerPermissions(list=True, write=True),
+            expiry=(datetime.utcnow() + timedelta(days=1))))
+
+
+def _create_test_job(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
+    from azure.batch.models import (JobPreparationTask, JobAddParameter, JobManagerTask, OnAllTasksComplete,
+                                    PoolInformation, EnvironmentSetting)
+
+    logger = get_logger('test')
+    batch_client = create_batch_client(settings)
+    storage_client = create_storage_client(settings)
+
     # create automation job
+    resource_files = _list_build_resource_files(storage_client, build_id)
+
     prep_task = JobPreparationTask(get_command_string('./app/install.sh'),
                                    resource_files=resource_files,
                                    wait_for_success=True)
@@ -60,20 +79,7 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
 
     job_id = 'test-{}'.format(datetime.utcnow().strftime('%Y%m%d-%H%M%S'))
 
-    # create output storage container
-    output_container_name = 'output-{}'.format(job_id)
-    sc.create_container(container_name=output_container_name)
-    output_container_url = sc.make_blob_url(
-        container_name=output_container_name,
-        blob_name='',
-        protocol='https',
-        sas_token=sc.generate_container_shared_access_signature(
-            container_name=output_container_name,
-            permission=ContainerPermissions(list=True, write=True),
-            expiry=(datetime.utcnow() + timedelta(days=1))))
-
-    # create automation job
-    job_complete_action = OnAllTasksComplete.no_action if remain_active else OnAllTasksComplete.terminate_job
+    output_container_url = _create_output_container_folder(storage_client, job_id)
 
     job_environment = [EnvironmentSetting(name='AUTOMATION_OUTPUT_CONTAINER', value=output_container_url)]
     if run_live:
@@ -82,14 +88,15 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
         job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_PASSWORD', value=settings['automation']['key']))
         job_environment.append(EnvironmentSetting(name='AUTOMATION_SP_TENANT', value=settings['automation']['tenant']))
 
-    test_pool = next(p['id'] for p in settings['pools'] if p['usage'] == 'test')
-    bc.job.add(JobAddParameter(id=job_id,
-                               pool_info=PoolInformation(test_pool),
-                               display_name='Automation on build {}. Live: {}'.format(build_id, run_live),
-                               common_environment_settings=job_environment,
-                               job_preparation_task=prep_task,
-                               job_manager_task=manage_task,
-                               on_all_tasks_complete=job_complete_action))
+    # create automation job
+    batch_client.job.add(JobAddParameter(
+        id=job_id,
+        pool_info=PoolInformation(next(p['id'] for p in settings['pools'] if p['usage'] == 'test')),
+        display_name='Automation on build {}. Live: {}'.format(build_id, run_live),
+        common_environment_settings=job_environment,
+        job_preparation_task=prep_task,
+        job_manager_task=manage_task,
+        on_all_tasks_complete=OnAllTasksComplete.no_action if remain_active else OnAllTasksComplete.terminate_job))
 
     logger.info('Job %s is created with preparation task and manager task.', job_id)
 
