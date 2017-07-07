@@ -63,7 +63,7 @@ def _report(args: argparse.Namespace) -> None:
     import yaml
     settings = yaml.load(args.config)
 
-    tasks_list = list(_query_results(settings, args.run_id, args.failed_only))
+    tasks_list = list(_query_results(settings, args.run_id, args.failed))
     tasks_results = list(_parse_tests(tasks_list))
 
     if args.include_log and args.html:
@@ -79,7 +79,6 @@ def _report(args: argparse.Namespace) -> None:
     if args.html:
         with open('results.html', 'w') as html_file:
             html_file.write(_build_html_page(args.run_id, headers, tasks_results, tasks_logs))
-        print('Output is written to results.html')
     else:
         import tabulate
         print(tabulate.tabulate(tasks_results, headers=headers))
