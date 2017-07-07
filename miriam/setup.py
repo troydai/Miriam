@@ -53,39 +53,12 @@ def create_pool(settings):
     sys.exit(0)
 
 
-def verify(setting_file_path):
-    from azure.common import AzureHttpError
-    from azure.batch.models import BatchErrorException
-
-    try:
-        with open(setting_file_path, 'r') as fq:
-            settings = yaml.load(fq)
-            batch_client = create_batch_client(settings)
-            batch_client.pool.list()
-            next(batch_client.account.list_node_agent_skus())
-
-            storage_client = create_storage_client(settings)
-            storage_client.list_containers(num_results=1)
-    except IOError:
-        print('Failed to read file {}'.format(setting_file_path))
-        sys.exit(1)
-    except AzureHttpError:
-        print('Storage account setting is wrong.')
-        sys.exit(1)
-    except BatchErrorException:
-        print('Batch account setting is wrong.')
-        sys.exit(1)
-
-    return settings
-
-
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--settings', type=str, help='The settings file contains the credentials to the batch and '
                                                      'storage accounts. Default: ~/.miriam/config.yaml')
-    parser.add_argument('--verify', action='store_true', help='Verify the settings file.')
     parser.add_argument('--create-pool', action='store_true', help='Initiate the pool in the batch account.')
     args = parser.parse_args()
 
@@ -93,11 +66,7 @@ if __name__ == '__main__':
         print('Options --create-default, --verify, and --create-pool are mutual exclusive.')
         sys.exit(1)
 
-    if args.verify:
-        verify(args.settings or os.path.expanduser('~/.miriam/config.yaml'))
-        sys.exit(0)
-
     if args.create_pool:
-        create_pool(verify(args.settings or os.path.expanduser('~/.miriam/config.yaml')))
+        create_pool(args.settings or os.path.expanduser('~/.miriam/config.yaml'))
 
     parser.print_help()
