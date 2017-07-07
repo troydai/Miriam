@@ -97,6 +97,6 @@ set_account.sh
 config.json
 
 # Miriam
-default.config.yaml
+default-config.yaml
 results.html
 
