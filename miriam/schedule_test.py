@@ -103,7 +103,7 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
 
 def _test_entry(arg: Namespace):
     import yaml
-    settings = yaml.load(arg.config_file)
+    settings = yaml.load(arg.config)
     _create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
 
 

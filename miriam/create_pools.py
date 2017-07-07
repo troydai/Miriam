@@ -1,33 +1,18 @@
-#!/usr/bin/env python
-
-import sys
-import os.path
-import yaml
+import argparse
 
 
-def get_command_string(*args):
-    return "/bin/bash -c 'set -e; set -o pipefail; {}; wait'".format(';'.join(args))
-
-
-def create_batch_client(settings):
-    from azure.batch import BatchServiceClient
-    from azure.batch.batch_auth import SharedKeyCredentials
-    cred = SharedKeyCredentials(settings['azurebatch']['account'], settings['azurebatch']['key'])
-    return BatchServiceClient(cred, settings['azurebatch']['endpoint'])
-
-
-def create_storage_client(settings):
-    from azure.storage.blob import BlockBlobService
-    return BlockBlobService(settings['azurestorage']['account'], settings['azurestorage']['key'])
-
-
-def create_pool(settings):
+def _create_pools(args: argparse.Namespace) -> None:
+    import sys
     from azure.batch.models import (PoolAddParameter, VirtualMachineConfiguration, MetadataItem, StartTask,
                                     UserIdentity, AutoUserSpecification, AutoUserScope, ElevationLevel)
-    bc = create_batch_client(settings)
+    from miriam._utility import create_batch_client, get_command_string
+    from miriam.verify_settings import verify_settings
+
+    settings = verify_settings(args)
+    batch_client = create_batch_client(settings)
 
     options = dict(((sku.id, image_ref.publisher, image_ref.offer, image_ref.sku), image_ref) for sku in
-                   bc.account.list_node_agent_skus() for image_ref in sku.verified_image_references)
+                   batch_client.account.list_node_agent_skus() for image_ref in sku.verified_image_references)
 
     for pool_setting in settings['pools']:
         image = (pool_setting['sku'], *pool_setting['image'].split())
@@ -48,25 +33,10 @@ def create_pool(settings):
                                 target_low_priority_nodes=int(pool_setting['low-pri']),
                                 max_tasks_per_node=int(pool_setting['max-tasks']),
                                 metadata=[MetadataItem('usage', pool_setting['usage'])])
-        bc.pool.add(pool)
+        batch_client.pool.add(pool)
 
     sys.exit(0)
 
 
-if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--settings', type=str, help='The settings file contains the credentials to the batch and '
-                                                     'storage accounts. Default: ~/.miriam/config.yaml')
-    parser.add_argument('--create-pool', action='store_true', help='Initiate the pool in the batch account.')
-    args = parser.parse_args()
-
-    if int(args.create_default) + int(args.verify) + int(args.create_pool) > 1:
-        print('Options --create-default, --verify, and --create-pool are mutual exclusive.')
-        sys.exit(1)
-
-    if args.create_pool:
-        create_pool(args.settings or os.path.expanduser('~/.miriam/config.yaml'))
-
-    parser.print_help()
+def setup_arguments(subparsers) -> None:
+    subparsers.add_parser('create-pools', help='Create the batch pools.').set_defaults(func=_create_pools)

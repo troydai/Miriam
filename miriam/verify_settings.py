@@ -1,7 +1,7 @@
 import argparse
 
 
-def verify_settings(args: argparse.Namespace) -> None:
+def verify_settings(args: argparse.Namespace) -> dict:
     import yaml
     import sys
     from miriam._utility import create_storage_client, create_batch_client

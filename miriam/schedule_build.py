@@ -73,7 +73,7 @@ def _create_build_job(pool, timestamp, settings):
 def _build_entry(arg: Namespace):
     import yaml
 
-    settings = yaml.load(arg.config_file)
+    settings = yaml.load(arg.config)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d-%H%M%S')
     logger = get_logger('build')
     batch_client = create_batch_client(settings)

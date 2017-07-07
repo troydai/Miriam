@@ -3,11 +3,11 @@ def program():
     import sys
     import os.path
 
-    import miriam
     import miriam.schedule_build
     import miriam.schedule_test
     import miriam.create_default_config
     import miriam.verify_settings
+    import miriam.create_pools
 
     from miriam._utility import config_logging
 
@@ -24,6 +24,7 @@ def program():
     miriam.schedule_build.setup_arguments(subparsers.add_parser('build', help='Start a build job'))
     miriam.schedule_test.setup_arguments(subparsers.add_parser('test', help='Start a test job'))
     miriam.create_default_config.setup_arguments(subparsers)
+    miriam.create_pools.setup_arguments(subparsers)
     miriam.verify_settings.setup_arguments(subparsers)
 
     args = parser.parse_args()
