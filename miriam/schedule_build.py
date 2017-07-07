@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-
 import datetime
-from argparse import ArgumentParser, Namespace
+import argparse
 
 from ._utility import create_storage_client, create_batch_client, get_command_string, get_logger
 
@@ -70,7 +68,7 @@ def _create_build_job(pool, timestamp, settings):
             expiry=(datetime.datetime.utcnow() + datetime.timedelta(days=1))))
 
 
-def _build_entry(arg: Namespace):
+def _build_entry(arg: argparse.Namespace) -> None:
     import yaml
 
     settings = yaml.load(arg.config)
@@ -87,7 +85,8 @@ def _build_entry(arg: Namespace):
     print(build_job_id)
 
 
-def setup_arguments(parser: ArgumentParser) -> None:
+def setup_arguments(subparsers) -> None:
+    parser = subparsers.add_parser('build', help='Start a build job')
     parser.add_argument('--test', action='store_true', help='Run tests against the build')
     parser.add_argument('--live', action='store_true', help='Run tests live')
     parser.set_defaults(func=_build_entry)

@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-
-from argparse import ArgumentParser, Namespace
+import argparse
 from datetime import datetime, timedelta
 from azure.storage.blob import BlockBlobService
 from miriam._utility import get_logger, get_command_string, create_batch_client, create_storage_client
@@ -101,13 +99,14 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
     logger.info('Job %s is created with preparation task and manager task.', job_id)
 
 
-def _test_entry(arg: Namespace):
+def _test_entry(arg: argparse.Namespace) -> None:
     import yaml
     settings = yaml.load(arg.config)
     _create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
 
 
-def setup_arguments(parser: ArgumentParser) -> None:
+def setup_arguments(subparsers) -> None:
+    parser = subparsers.add_parser('test', help='Start a test job')
     parser.add_argument('job_id', help='The ID of to build to test')
     parser.add_argument('--live', action='store_true', help='Run tests live')
     parser.add_argument('--remain-active', action='store_true', help='Keep the job active after all tasks are finished')
