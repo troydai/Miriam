@@ -51,7 +51,7 @@ def _create_output_container_folder(storage_client: BlockBlobService, job_id: st
             expiry=(datetime.utcnow() + timedelta(days=1))))
 
 
-def _create_test_job(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
+def create_test_job(build_id: str, settings: dict, remain_active: bool = False, run_live: bool = False):
     from azure.batch.models import (JobPreparationTask, JobAddParameter, JobManagerTask, OnAllTasksComplete,
                                     PoolInformation, EnvironmentSetting)
 
@@ -102,7 +102,7 @@ def _create_test_job(build_id: str, settings: dict, remain_active: bool = False,
 def _test_entry(arg: argparse.Namespace) -> None:
     import yaml
     settings = yaml.load(arg.config)
-    _create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
+    create_test_job(arg.job_id, settings, remain_active=arg.remain_active, run_live=arg.live)
 
 
 def setup(subparsers) -> None:
