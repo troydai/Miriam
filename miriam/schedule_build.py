@@ -49,8 +49,9 @@ def _create_build_job(batch_client: BatchServiceClient, storage_client: BlockBlo
         logger.error('Cannot find a build pool. Please check the pools list in config file.')
         sys.exit(1)
 
+    logger.info('Creating build job %s in pool %s', build_id, pool.id)
     batch_client.job.add(JobAddParameter(id=build_id,
-                                         pool_info=PoolInformation(pool),
+                                         pool_info=PoolInformation(pool.id),
                                          on_all_tasks_complete=OnAllTasksComplete.terminate_job))
     logger.info('Job %s is created.', build_id)
 
